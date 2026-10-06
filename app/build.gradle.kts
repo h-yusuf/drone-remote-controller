@@ -11,8 +11,25 @@ android {
         applicationId = "com.zora.drone"
         minSdk = 29
         targetSdk = 35
-        versionCode = 1
-        versionName = "0.1"
+        // CI sets these from the tag (v0.2 -> "0.2") and run number, so every release installs over the last.
+        versionCode = System.getenv("VERSION_CODE")?.toInt() ?: 1
+        versionName = System.getenv("VERSION_NAME")?.removePrefix("v") ?: "0.1"
+    }
+    // Release key lives outside the repo: ~/.android/zora-release.jks locally, a secret in CI.
+    // Without KEYSTORE_FILE, release falls back to the debug key.
+    val keystore = System.getenv("KEYSTORE_FILE")
+    signingConfigs {
+        create("release") {
+            if (keystore != null) {
+                storeFile = file(keystore)
+                storePassword = System.getenv("KEYSTORE_PASSWORD")
+                keyAlias = "zora"
+                keyPassword = System.getenv("KEYSTORE_PASSWORD")
+            }
+        }
+    }
+    buildTypes {
+        release { signingConfig = signingConfigs.getByName(if (keystore != null) "release" else "debug") }
     }
     buildFeatures { compose = true }
     compileOptions {
