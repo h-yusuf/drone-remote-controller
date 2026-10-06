@@ -3,6 +3,9 @@ package com.zora.drone.proto
 import java.nio.ByteBuffer
 import java.nio.ByteOrder
 
+/** Zora telemetry from the drone (main.c telemetryTask): degrees, volts. Sign: roll + = right side down, pitch - = nose down. */
+data class Telemetry(val roll: Float, val pitch: Float, val yaw: Float, val vbat: Float, val calRoll: Float, val calPitch: Float)
+
 object Crtp {
     /**
      * Link echo (port 15, ch 0) carrying a timestamp, + checksum. Setpoints get no reply, so the
@@ -45,6 +48,13 @@ object Crtp {
             if (b[i].toInt() == 0 && ++zeros == 2) return b[i + 1].toInt() and 0xFF
         }
         return null
+    }
+
+    /** Telemetry packet: port 0x0A ch 0, 6 x float32 LE + checksum (26 bytes). Null if not one. */
+    fun telemetry(b: ByteArray, len: Int): Telemetry? {
+        if (len != 26 || (b[0].toInt() and 0xF3) != 0xA0 || b[25] != checksum(b, 25)) return null
+        val f = ByteBuffer.wrap(b, 1, 24).order(ByteOrder.LITTLE_ENDIAN)
+        return Telemetry(f.float, f.float, f.float, f.float, f.float, f.float)
     }
 
     private fun checksum(a: ByteArray, n: Int) = (0 until n).sumOf { a[it].toInt() and 0xFF }.toByte()

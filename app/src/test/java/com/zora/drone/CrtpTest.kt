@@ -76,4 +76,20 @@ class CrtpTest {
         t.exit()
         assertEquals(0, t.pwm(0))
     }
+
+    @Test fun telemetryPacket() {
+        val body = java.nio.ByteBuffer.allocate(25).order(java.nio.ByteOrder.LITTLE_ENDIAN).put(0xA0.toByte())
+            .putFloat(1.5f).putFloat(-5.3f).putFloat(90f).putFloat(3.9f).putFloat(0.2f).putFloat(-5.3f).array()
+        val b = body + body.sumOf { it.toInt() and 0xFF }.toByte()
+        assertEquals(com.zora.drone.proto.Telemetry(1.5f, -5.3f, 90f, 3.9f, 0.2f, -5.3f), Crtp.telemetry(b, 26))
+        b[25] = (b[25] + 1).toByte()
+        assertEquals(null, Crtp.telemetry(b, 26))
+        assertEquals(null, Crtp.echo(1).let { Crtp.telemetry(it, it.size) })
+    }
+
+    @Test fun levelTrigger() {
+        // Blueprint §12: 23 00 "levelCal" 00 "trigger" 00 08 01 + checksum
+        val body = byteArrayOf(0x23, 0) + "levelCal".toByteArray() + 0 + "trigger".toByteArray() + 0 + byteArrayOf(0x08, 0x01)
+        assertArrayEquals(body + body.sumOf { it.toInt() and 0xFF }.toByte(), Crtp.setParam("levelCal", "trigger", 1, uint16 = false))
+    }
 }

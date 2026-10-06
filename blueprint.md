@@ -24,6 +24,7 @@ Path file firmware merujuk ke repo firmware `esp-drone` (folder sebelah: `../esp
 - Telemetri baterai (`pm.vbat`) lewat CRTP log.
 - Trim roll/pitch, sensitivitas, expo.
 - Simpan setting.
+- **Kalibrasi level + telemetri** (bagian 12): tampilkan kemiringan roll/pitch & baterai, tombol "SET LEVEL 0°".
 - **Mode Test Motor** (bagian 11): putar M1–M4 satu per satu, atau keempatnya bersama dengan slider/ramp thrust. Untuk bench test tanpa propeller.
 
 **Di luar scope sekarang:** altitude/position hold (butuh sensor tambahan), FPV, integrasi Zora.
@@ -253,3 +254,82 @@ Konsekuensi untuk app: selama mode test aktif, **terus kirim paket** (echo atau 
 | SEMUA di 50% | keempat motor berputar, LED drone tetap nyala terus |
 | Matikan WiFi tablet saat SEMUA aktif | motor berhenti < 1,5 detik (pengaman firmware) |
 | RAMP sampai 100% pakai baterai saja | catat persen saat ESP reboot (kalau ada) |
+
+## 12. Kalibrasi level & telemetri (firmware sudah siap, 2026-10-06)
+
+**Masalah yang diselesaikan:** sensor membaca drone miring beberapa derajat walau di lantai datar (contoh terukur: pitch −5,3°).
+Stabilizer lalu "meratakan" yang sebenarnya sudah rata → motor depan kencang, motor belakang hampir mati (gejala "cuma 2 baling yang muter").
+Dulu offset hanya bisa diubah lewat `ROLL_CALIB`/`PITCH_CALIB` di menuconfig + flash ulang. Sekarang bisa dari app.
+
+### Firmware (esp-drone, belum di-commit)
+
+| Bagian | Detail | File |
+|---|---|---|
+| Param `levelCal.trigger` (uint8) | tulis **1** = rata-rata accelerometer ±0,5 s, jadikan pose sekarang 0°/0°, simpan ke NVS. Tulis **2** = hapus kalibrasi (0°/0°). Kembali 0 sendiri setelah selesai | `sensors_mpu6050_hm5883L_ms5611.c` (`levelCalSample`) |
+| Param `levelCal.roll` / `levelCal.pitch` (float, read-only) | nilai kalibrasi aktif (derajat) | idem |
+| Simpan permanen | NVS namespace `zora`, key `calR`/`calP` (derajat × 100). Saat boot: NVS kalau ada, kalau tidak pakai Kconfig `ROLL_CALIB`/`PITCH_CALIB` | idem (`levelCalLoad`) |
+| Telemetri 10 Hz | dikirim selama app terhubung (ada paket < 1 s) | `main/main.c` (`telemetryTask`) |
+
+Set trigger pakai set-by-name yang sama dengan mode test motor (bagian 11):
+`Crtp.setParam("levelCal", "trigger", 1, uint16 = false)` → `23 00 "levelCal" 00 "trigger" 00 08 01` + checksum.
+
+### Format paket telemetri (drone → app)
+
+```
+byte 0      header CRTP = 0xA0         (port 0x0A, channel 0; port ini tidak dipakai Crazyflie)
+             cek pakai (b[0] and 0xF3) == 0xA0, sama seperti echo
+byte 1..24  6 × float32 little-endian:
+              roll, pitch, yaw   (derajat, hasil estimator — yang dipakai stabilizer)
+              vbat               (volt, divider GPIO2)
+              calRoll, calPitch  (derajat, kalibrasi level aktif)
+byte 25     checksum UDP (jumlah byte 0..24 & 0xFF)
+```
+Total 26 byte. Konvensi tanda (diverifikasi dengan tes tekan sudut): **roll + = sisi kanan turun**, **pitch − = hidung turun**.
+
+### UI
+
+- Status bar: **Tilt** `R x.x° P y.y°` (hijau kalau keduanya < 2°) dan **Batt** `x.xx V` (oranye < 3,5 V).
+- Tombol **"SET LEVEL 0°"**: aktif hanya saat **ARM mati** dan drone **connected**. Klik → dialog konfirmasi:
+  "Taruh drone di permukaan datar dengan posisi seperti saat terbang, jangan disentuh. Posisi sekarang dijadikan 0° dan disimpan permanen di drone."
+  Tampilkan juga nilai sekarang dan kalibrasi lama (`calRoll`/`calPitch`). Konfirmasi → kirim trigger 1 (2× dengan jeda 20 ms, aman: firmware mengabaikan tulis ulang selama sampling).
+- Setelah ±1 detik, Tilt harus menunjukkan ≈ 0°/0°. Kalau tidak, ulangi.
+- Opsional: tombol kecil "hapus kalibrasi" (trigger 2).
+
+**Penting untuk user:** kalibrasi menganggap pose sekarang **rata**. Kalau drone duduk miring karena baterai/kaki tidak rata, kalibrasi ikut
+menyimpan kemiringan itu dan drone akan terbang condong. Taruh drone di posisi yang sama seperti saat terbang (baterai terpasang, kaki rata).
+
+### Uji
+
+| Langkah | Selesai kalau |
+|---|---|
+| Buka app, drone datar | Tilt tampil & berubah saat drone dimiringkan (kanan turun → R positif, depan turun → P negatif) |
+| SET LEVEL 0° di permukaan rata | Tilt ≈ 0°/0° dalam 1 s |
+| Matikan & nyalakan drone | Tilt tetap ≈ 0° (tersimpan di NVS) |
+| Thrust kecil (±4000) di lantai rata | keempat motor kurang lebih sama (bukan cuma 2) |
+
+## 13. Review mode terbang (2026-10-06)
+
+Hasil cek kode app (`ControlState.kt`, `Crtp.kt`, `DroneLink.kt`) terhadap firmware:
+
+| Item | Status | Catatan |
+|---|---|---|
+| Format setpoint 16 byte, header 0x30, checksum | ✅ benar | cocok dengan `crtp_commander_rpyt.c:48`, `wifi_esp32.c:54` |
+| Thrust 0..60000, deadzone, unlock setelah stik bawah | ✅ benar | firmware juga punya thrust lock sendiri |
+| Kirim 50 Hz + echo 5 Hz, stop → thrust 0 ×5 | ✅ benar | di bawah watchdog 500 ms |
+| Roll: stik kanan → roll + | ⚠️ **perlu uji bench** | state roll + = kanan turun, jadi kemungkinan benar, tapi mode CPPM firmware membalik roll (`crtp_commander_generic.c:217`) |
+| Pitch: stik maju → pitch + (`PITCH_SIGN = 1f`) | ❌ **kemungkinan terbalik** | state pitch − = hidung turun, controller mengejar setpoint → +15° = hidung **naik** = mundur. Mode CPPM firmware juga memakai `-1 ×` stik pitch (`crtp_commander_generic.c:218`). Kemungkinan perlu `PITCH_SIGN = -1f` |
+| Yaw: stik kanan → yaw + | ✅ kemungkinan benar | firmware membalik input legacy (`crtp_commander_rpyt.c:251`) |
+
+Sebagian besar "anomali" yang terlihat di lantai **bukan dari app**, tapi dari firmware/hardware dan sudah ditangani di firmware:
+offset level (bagian 12), integral PID menumpuk saat drone tertahan di lantai (firmware sekarang me-reset integral di thrust < 10000),
+baterai anjlok (ESP reboot di thrust tinggi).
+
+### Uji tanda stik (wajib sebelum terbang, tanpa propeller)
+
+Pakai firmware dengan `DEBUG_PRINT_ATTITUDE=y` (log `cmd r/p/y` & PWM), drone di meja, ARM, thrust ±30%, lalu dorong **satu stik** penuh dan lihat PWM:
+
+| Input | Yang benar | Kalau terbalik |
+|---|---|---|
+| Stik kanan **maju** | M2 & M3 (belakang) **naik**, M1 & M4 turun → hidung turun → maju | ganti `PITCH_SIGN` |
+| Stik kanan **ke kanan** | M3 & M4 (kiri) **naik** → miring kanan → geser kanan | tambah `ROLL_SIGN = -1f` |
+| Stik kiri **ke kanan** | M1 & M3 (motor CCW) **naik** → badan berputar searah jarum jam (kanan) | tambah `YAW_SIGN = -1f` |

@@ -14,7 +14,11 @@ const val MAX_ANGLE = 15f        // deg, roll/pitch
 const val MAX_YAW = 150f         // deg/s
 const val DEADZONE = 0.05f
 const val EXPO = 0.3f
-const val PITCH_SIGN = 1f        // flip to -1f if stick forward raises the rear motors
+// Stick sign knobs, verify on the bench (blueprint §13). Firmware: + pitch setpoint = nose up = backward
+// (crtp_commander_rpyt.c:199 velocity.x = -pitch, CPPM mode also negates), so stick forward sends - pitch.
+const val PITCH_SIGN = -1f       // stick forward must raise M2 & M3 (rear)
+const val ROLL_SIGN = 1f         // stick right must raise M3 & M4 (left)
+const val YAW_SIGN = 1f          // left stick right must raise M1 & M3 (CCW motors)
 
 /** Deadzone, then expo: x^3*e + x*(1-e). Input/output -1..1. */
 fun axis(v: Float): Float {
@@ -50,9 +54,9 @@ class ControlState {
         val t = if (armed && !locked) raw else 0
         if (t != thrust) thrust = t
         return Crtp.encodeSetpoint(
-            roll = axis(right.x) * MAX_ANGLE,
+            roll = ROLL_SIGN * axis(right.x) * MAX_ANGLE,
             pitch = PITCH_SIGN * axis(right.y) * MAX_ANGLE,
-            yaw = axis(left.x) * MAX_YAW,
+            yaw = YAW_SIGN * axis(left.x) * MAX_YAW,
             thrust = t,
         )
     }

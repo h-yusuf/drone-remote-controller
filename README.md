@@ -19,6 +19,8 @@ Dibuat karena app resmi ESP-Drone tidak bisa mengirim perintah di Android 10 ke 
   - **Drone**: `connected` kalau drone membalas dalam 1 detik terakhir.
   - **Range**: perkiraan jarak tablet ke drone dari kekuatan sinyal WiFi (dBm).
   - **Ping**: waktu pulang-pergi paket ke drone (ms).
+  - **Tilt**: kemiringan roll/pitch drone (derajat). Hijau kalau keduanya di bawah 2°.
+  - **Batt**: tegangan baterai drone. Oranye di bawah 3,5 V.
   - **thrust**: nilai gas yang sedang dikirim (0–60000).
 - **Fitur keselamatan:**
   - Switch **ARM**: motor tidak akan nyala sebelum ARM dinyalakan.
@@ -26,6 +28,7 @@ Dibuat karena app resmi ESP-Drone tidak bisa mengirim perintah di Android 10 ke 
   - Tombol **STOP** besar di tengah: langsung matikan motor.
   - Saat app ditutup, pindah ke app lain, atau layar dikunci: motor dimatikan otomatis.
   - Layar tidak mati sendiri selama app terbuka.
+- **SET LEVEL 0°**: kalibrasi level dari app, disimpan permanen di drone (lihat [Kalibrasi level](#kalibrasi-level)).
 - **Mode Test Motor** untuk bench test tanpa propeller (lihat [Test motor](#test-motor)).
 
 ## Instalasi
@@ -53,6 +56,19 @@ Kalau sebelumnya sudah memasang versi yang ditandatangani dengan key lain (misal
 > **Selalu tes pertama kali tanpa propeller.** Pastikan motor berputar sesuai stik dan berhenti saat STOP ditekan atau layar dikunci.
 
 Kalau drone terbalik, firmware mematikan motor sampai drone di-restart (LED kedip sangat cepat).
+
+### Kalibrasi level
+
+Kalau Tilt tidak mendekati 0° padahal drone di lantai datar, sensor drone perlu dikalibrasi.
+Tanpa kalibrasi, drone mengira dirinya miring, sehingga sebagian motor berputar jauh lebih kencang dari yang lain.
+
+1. Taruh drone di permukaan datar dengan posisi seperti saat terbang (baterai terpasang, kaki rata).
+2. Pastikan ARM mati dan Drone `connected`, lalu tekan **SET LEVEL 0°**.
+3. Jangan sentuh drone, lalu tekan **SET LEVEL** di dialog.
+4. Dalam sekitar 1 detik, Tilt harus menunjukkan ≈ 0°/0°. Kalau belum, ulangi.
+
+Kalibrasi tetap tersimpan setelah drone dimatikan. **Hapus kalibrasi** di dialog yang sama mengembalikan offset ke 0°.
+Kalibrasi menganggap posisi saat itu rata. Kalau drone duduk miring saat dikalibrasi, drone akan terbang condong.
 
 ### Test motor
 
@@ -87,9 +103,13 @@ Pengaturan ada sebagai konstanta di kode, belum ada layar setting.
 | `MAX_THRUST_APP` | `control/ControlState.kt` | 60000 | Batas gas maksimum. Turunkan untuk membatasi tenaga. |
 | `MAX_ANGLE` | `control/ControlState.kt` | 15° | Kemiringan maksimum roll/pitch. |
 | `MAX_YAW` | `control/ControlState.kt` | 150°/s | Kecepatan putar maksimum. |
-| `PITCH_SIGN` | `control/ControlState.kt` | 1 | Ubah ke -1 kalau stik maju justru menaikkan motor belakang. |
+| `PITCH_SIGN` | `control/ControlState.kt` | -1 | Stik kanan maju harus menaikkan M2 & M3 (belakang). Kalau terbalik, ganti tanda. |
+| `ROLL_SIGN` | `control/ControlState.kt` | 1 | Stik kanan ke kanan harus menaikkan M3 & M4 (kiri). Kalau terbalik, ganti tanda. |
+| `YAW_SIGN` | `control/ControlState.kt` | 1 | Stik kiri ke kanan harus menaikkan M1 & M3 (motor CCW). Kalau terbalik, ganti tanda. |
 | `RSSI_AT_1M` | `net/DroneLink.kt` | -40 dBm | Isi dengan nilai dBm saat drone berjarak 1 m dari tablet. |
 | `PATH_LOSS_N` | `net/DroneLink.kt` | 2.5 | 2 untuk lapangan terbuka, sampai 3.5 untuk dalam ruangan. |
+
+Arah stik **wajib dicek di bench sebelum terbang** (tanpa propeller, ARM, thrust ±30%, dorong satu stik penuh, lihat PWM di log firmware). Detail di [blueprint.md §13](blueprint.md#13-review-mode-terbang-2026-10-06).
 
 Range adalah perkiraan dari sinyal WiFi, bisa meleset sekitar ±50%. Pakai sebagai patokan kasar, bukan ukuran pasti.
 
@@ -124,7 +144,7 @@ Komunikasi: UDP ke `192.168.43.42:2390`, paket CRTP commander (roll, pitch, yaw,
 ```
 app/src/main/java/com/zora/drone/
 ├─ MainActivity.kt          host Compose, layar selalu nyala, matikan motor saat app ditutup
-├─ proto/Crtp.kt            encode paket setpoint, echo, dan set param by name
+├─ proto/Crtp.kt            encode setpoint, echo, set param by name; parse telemetri
 ├─ control/ControlState.kt  state joystick, ARM/STOP, mapping stik ke setpoint
 ├─ control/MotorTest.kt     state mode test motor (tombol, slider, ramp)
 ├─ net/DroneLink.kt         ikat socket ke WiFi drone, kirim 50 Hz, hitung ping dan range
@@ -138,7 +158,6 @@ Detail protokol, aturan firmware, dan rencana pengembangan ada di [blueprint.md]
 
 ## Belum ada
 
-- Telemetri baterai.
 - Layar setting (trim, sensitivitas, expo).
 - Altitude hold (butuh sensor ketinggian).
 - Sambung otomatis ke WiFi drone dari dalam app.

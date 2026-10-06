@@ -9,6 +9,7 @@ import android.os.SystemClock
 import com.zora.drone.control.ControlState
 import com.zora.drone.control.MotorTest
 import com.zora.drone.proto.Crtp
+import com.zora.drone.proto.Telemetry
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -53,6 +54,8 @@ class DroneLink(
     val rttMs = MutableStateFlow<Float?>(null)
     /** Last motor-test param reply: 0 = accepted, else firmware errno. Null until one arrives. */
     val paramError = MutableStateFlow<Int?>(null)
+    /** Latest telemetry (10 Hz while connected), null until one arrives. */
+    val telemetry = MutableStateFlow<Telemetry?>(null)
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val drone = InetSocketAddress(DRONE_IP, 2390)
@@ -120,6 +123,7 @@ class DroneLink(
                     s.receive(pkt)
                     lastRx = SystemClock.elapsedRealtime()
                     Crtp.paramReplyError(pkt.data, pkt.length)?.let { paramError.value = it }
+                    Crtp.telemetry(pkt.data, pkt.length)?.let { telemetry.value = it }
                     Crtp.echoTime(pkt.data, pkt.length)?.let {
                         val ms = (System.nanoTime() - it) / 1e6f
                         rttMs.value = rttMs.value?.let { old -> old * 0.8f + ms * 0.2f } ?: ms
@@ -150,6 +154,20 @@ class DroneLink(
             connected.value = false
             rssi.value = null
             rttMs.value = null
+            telemetry.value = null
+        }
+    }
+
+    /**
+     * Level calibration (blueprint §12): 1 = take the current pose as 0°/0° and save to NVS, 2 = clear.
+     * Sent twice; the firmware ignores rewrites while it samples.
+     */
+    fun setLevel(trigger: Int) {
+        scope.launch {
+            repeat(2) {
+                send(Crtp.setParam("levelCal", "trigger", trigger, uint16 = false))
+                delay(20)
+            }
         }
     }
 
