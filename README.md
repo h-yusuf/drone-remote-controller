@@ -1,189 +1,125 @@
-# Blueprint — App Android "Zora Drone Controller"
+# Zora Drone Controller
 
-Status: **rencana**, belum ada kode. Semua detail protokol di bawah sudah dicek langsung dari firmware drone (file:baris disebut).
-Path file firmware merujuk ke repo firmware `esp-drone` (folder sebelah: `../esp-drone`, branch `zora-s2mini`).
+Remote control Android untuk drone [ESP-Drone](https://github.com/espressif/esp-drone) lewat WiFi.
+Dibuat karena app resmi ESP-Drone tidak bisa mengirim perintah di Android 10 ke atas.
 
-## 1. Kenapa perlu app sendiri
+![Preview app di tablet: status WiFi, Drone, Range, Ping, dua joystick dan tombol STOP](public/preview.jpeg)
 
-- App resmi ESP-Drone Android (2020, `https://www.pgyer.com/a27L`) **tidak mengirim paket** di tablet Infinix XPAD 20 Pro (Android 14/15).
-  Bukti dari log: tablet join AP (`station ... join`), tapi tidak ada paket UDP yang sampai (tidak ada `udp packet cksum unmatched`, LED tetap kedip lambat).
-- Dugaan kuat: Android 10+ tidak memakai WiFi "tanpa internet" sebagai jalur default. App lama tidak memanggil `bindProcessToNetwork`, jadi paketnya tidak pernah keluar lewat WiFi drone.
-- iOS tidak punya batasan ini, jadi app iOS bisa jalan.
-- Bonus: app sendiri bisa jadi fondasi integrasi Zora (kontrol suara) nanti.
+## Fitur
 
-## 2. Scope
+- **Tersambung ke WiFi drone walau tanpa internet.** Android 10+ tidak mau memakai WiFi tanpa internet secara default. App ini mengikat koneksinya langsung ke WiFi drone.
+- **Dua joystick mode 2** (layout RC standar):
+  - Kiri: naik-turun = thrust (gas), kiri-kanan = yaw (putar).
+  - Kanan: naik-turun = pitch (maju-mundur), kiri-kanan = roll (geser kiri-kanan).
+  - Stik gas tetap di posisi terakhir saat dilepas, seperti stik RC. Stik lain kembali ke tengah.
+  - Deadzone 5% di tengah dan expo supaya gerakan kecil lebih halus.
+- **Kirim perintah 50 kali per detik.**
+- **Status di bagian atas layar:**
+  - **WiFi**: IP tablet. Hijau `drone (192.168.43.x)` kalau sudah di WiFi drone.
+  - **Drone**: `connected` kalau drone membalas dalam 1 detik terakhir.
+  - **Range**: perkiraan jarak tablet ke drone dari kekuatan sinyal WiFi (dBm).
+  - **Ping**: waktu pulang-pergi paket ke drone (ms).
+  - **thrust**: nilai gas yang sedang dikirim (0–60000).
+- **Fitur keselamatan:**
+  - Switch **ARM**: motor tidak akan nyala sebelum ARM dinyalakan.
+  - Setelah ARM atau STOP, gas terkunci di 0 sampai stik kiri diturunkan ke paling bawah.
+  - Tombol **STOP** besar di tengah: langsung matikan motor.
+  - Saat app ditutup, pindah ke app lain, atau layar dikunci: motor dimatikan otomatis.
+  - Layar tidak mati sendiri selama app terbuka.
 
-**MVP (wajib):**
-- Connect ke AP drone, ikat (bind) socket ke jaringan WiFi itu.
-- Dua joystick virtual: kiri = thrust (atas-bawah) + yaw (kiri-kanan), kanan = pitch (atas-bawah) + roll (kiri-kanan). Mode 2, layout standar RC.
-- Kirim setpoint 50 Hz.
-- Tombol **STOP** besar (thrust 0, tahan terus).
-- Indikator koneksi (ada/tidaknya paket balasan dari drone).
+## Instalasi
 
-**Fase 2:**
-- Telemetri baterai (`pm.vbat`) lewat CRTP log.
-- Trim roll/pitch, sensitivitas, expo.
-- Simpan setting.
+1. Download file APK terbaru dari halaman [Releases](https://github.com/h-yusuf/drone-remote-controller/releases).
+2. Buka file APK di HP/tablet Android (minimal Android 10).
+3. Kalau diminta, izinkan "Install unknown apps" untuk app yang dipakai membuka file.
 
-**Di luar scope sekarang:** altitude/position hold (butuh sensor tambahan), FPV, integrasi Zora.
+Kalau sebelumnya sudah memasang versi yang ditandatangani dengan key lain (misalnya build debug), uninstall dulu versi lama.
 
-## 3. Protokol (dari firmware)
+## Cara pakai
 
-### Jaringan
+1. Nyalakan drone. Tunggu WiFi `ESP-DRONE_xxxxxxxxxxxx` muncul.
+2. Di Android, sambungkan ke WiFi itu dengan password `12345678`.
+   Kalau muncul peringatan "tidak ada internet", pilih tetap tersambung.
+3. Buka app **Zora Drone**. Dalam 1 detik:
+   - WiFi berubah jadi hijau `drone (192.168.43.x)`.
+   - Drone berubah jadi `connected`.
+   - LED biru di drone berubah dari kedip lambat menjadi nyala terus.
+4. Turunkan stik kiri ke paling bawah.
+5. Nyalakan switch **ARM**.
+6. Naikkan stik kiri pelan-pelan untuk menambah gas. Pakai stik kanan untuk maju-mundur dan geser kiri-kanan.
+7. Untuk berhenti: tekan **STOP**, atau turunkan gas lalu matikan ARM.
 
-| Item | Nilai | Sumber |
+> **Selalu tes pertama kali tanpa propeller.** Pastikan motor berputar sesuai stik dan berhenti saat STOP ditekan atau layar dikunci.
+
+Kalau drone terbalik, firmware mematikan motor sampai drone di-restart (LED kedip sangat cepat).
+
+### Kalau tidak tersambung
+
+| Gejala | Penyebab | Solusi |
 |---|---|---|
-| SSID | `ESP-DRONE_<MAC>` (contoh `ESP-DRONE_48F6EE79C585`) | `sdkconfig` `CONFIG_WIFI_BASE_SSID` |
-| Password | `12345678` | log `wifi_init_softap` |
-| IP drone | `192.168.43.42` | `wifi_esp32.c:308` |
-| Port UDP | `2390` (drone listen) | `wifi_esp32.c:29` |
-| Balasan | dikirim ke **IP:port asal** paket terakhir | `wifi_esp32.c:189` (`source_addr`) |
+| WiFi `searching…` | Belum tersambung ke WiFi mana pun | Sambungkan ke WiFi drone |
+| WiFi oranye `NOT drone WiFi` | Tersambung ke WiFi lain | Pindah ke WiFi `ESP-DRONE_...` |
+| WiFi hijau, Drone `no reply` | Drone tidak membalas | Restart drone, buka ulang app |
 
-App cukup membuka 1 socket UDP (port lokal bebas), lalu kirim ke `192.168.43.42:2390` dan baca balasan dari socket yang sama.
+## Kalibrasi
 
-### Format paket (app → drone)
+Pengaturan ada sebagai konstanta di kode, belum ada layar setting.
 
-Setiap datagram UDP berisi **paket CRTP + 1 byte checksum**:
-
-```
-offset  size  isi
-0       1     header CRTP = 0x30   (port 3 = commander, channel 0)
-1       4     roll    float32 LE   derajat, sudut absolut (mode ANGLE)
-5       4     pitch   float32 LE   derajat, sudut absolut (mode ANGLE)
-9       4     yaw     float32 LE   derajat/detik (mode RATE)
-13      2     thrust  uint16  LE   0..60000
-15      1     checksum = (jumlah byte 0..14) & 0xFF
-```
-
-Total **16 byte**. Sumber: struct `CommanderCrtpLegacyValues` di `crtp_commander_rpyt.c:48`, checksum di `wifi_esp32.c:54`.
-Paket dengan checksum salah dibuang, dan firmware mencetak `udp packet cksum unmatched` di log.
-
-### Aturan perilaku firmware yang wajib diikuti app
-
-| Aturan | Detail | Sumber |
-|---|---|---|
-| **Thrust lock** | Setelah connect, thrust diabaikan sampai app **pernah mengirim thrust = 0**. | `crtp_commander_rpyt.c:166-180` |
-| Thrust minimum | thrust < 1000 dianggap 0 | `MIN_THRUST` |
-| Thrust maksimum | dipotong di `MAX_THRUST` = 60000 (stock) | `crtp_commander_rpyt.c:42` |
-| Watchdog | Tidak ada setpoint > **500 ms**: drone diratakan. > **2000 ms**: motor mati. | `commander.h:35-36` |
-| "Connected" | Drone menganggap link hidup kalau ada paket < **1000 ms** terakhir (LED biru nyala terus) | `wifilink.c:49` |
-| Roll/pitch | sudut absolut (derajat), default ANGLE | `crtp_commander_rpyt.c:75-76` |
-| Yaw | kecepatan putar (derajat/detik), default RATE | `crtp_commander_rpyt.c:77` |
-| Emergency stop | kalau drone terbalik, motor mati sampai reboot (LED kedip sangat cepat) | `sitaw.c:144` |
-
-Konsekuensi untuk app:
-- Kirim **50 Hz** (tiap 20 ms). Jauh di bawah batas watchdog, dan cukup halus.
-- Paket pertama setelah connect **selalu thrust 0**.
-- Kalau app ke background, layar mati, atau joystick dilepas: **kirim thrust 0** beberapa kali, lalu berhenti kirim.
-
-### Paket balasan (drone → app)
-
-Drone membalas dengan paket CRTP (+ checksum) ke alamat asal. MVP cukup memakai "ada paket balasan dalam 1 detik terakhir" sebagai indikator connected.
-Fase 2: parsing CRTP log (port 5) untuk membaca `pm.vbat`. Ini butuh download TOC (daftar variabel log), lihat referensi cflib di bagian 9.
-
-## 4. Pemetaan joystick → setpoint
-
-| Input | Range joystick | Setpoint | Default |
+| Konstanta | File | Default | Kegunaan |
 |---|---|---|---|
-| Kiri vertikal | 0..1 (bawah = 0) | thrust | `0..MAX_THRUST_APP` (60000) |
-| Kiri horizontal | -1..1 | yaw rate | ±150 °/s |
-| Kanan vertikal | -1..1 | pitch | ±15° (atas = maju) |
-| Kanan horizontal | -1..1 | roll | ±15° (kanan = kanan) |
+| `MAX_THRUST_APP` | `control/ControlState.kt` | 60000 | Batas gas maksimum. Turunkan untuk membatasi tenaga. |
+| `MAX_ANGLE` | `control/ControlState.kt` | 15° | Kemiringan maksimum roll/pitch. |
+| `MAX_YAW` | `control/ControlState.kt` | 150°/s | Kecepatan putar maksimum. |
+| `PITCH_SIGN` | `control/ControlState.kt` | 1 | Ubah ke -1 kalau stik maju justru menaikkan motor belakang. |
+| `RSSI_AT_1M` | `net/DroneLink.kt` | -40 dBm | Isi dengan nilai dBm saat drone berjarak 1 m dari tablet. |
+| `PATH_LOSS_N` | `net/DroneLink.kt` | 2.5 | 2 untuk lapangan terbuka, sampai 3.5 untuk dalam ruangan. |
 
-- **Deadzone** 5% di tengah tiap sumbu, supaya drone tidak "melorot" karena jari tidak pas di tengah.
-- **Expo** (opsional): `out = x³·e + x·(1-e)`, e = 0.3. Halus di tengah, tetap penuh di ujung.
-- **Thrust kiri tidak auto-center** (seperti stik RC throttle). Sumbu lain kembali ke tengah saat dilepas.
-- **Tanda pitch:** cek di bench. Kalau stik maju membuat motor belakang yang naik, tanda pitch dibalik. Firmware Crazyflie: pitch positif = hidung naik.
+Range adalah perkiraan dari sinyal WiFi, bisa meleset sekitar ±50%. Pakai sebagai patokan kasar, bukan ukuran pasti.
 
-## 5. Arsitektur app
+## Build dari source
 
-**Stack:** Kotlin, Jetpack Compose, coroutines. `minSdk 29` (Android 10), `targetSdk` terbaru. Single activity, tanpa library pihak ketiga.
+Butuh JDK 17 dan Android SDK (platform 35).
 
-```
-app/
- ├─ MainActivity.kt           // host Compose, minta permission, layar selalu nyala saat terbang
- ├─ net/DroneNetwork.kt       // cari & bind jaringan WiFi drone (bagian 6)
- ├─ net/DroneLink.kt          // DatagramSocket: send(), receive loop, status connected
- ├─ proto/Crtp.kt             // encodeSetpoint(roll,pitch,yaw,thrust): ByteArray + checksum
- ├─ control/ControlLoop.kt    // coroutine 50 Hz: baca state joystick → encode → send
- ├─ control/ControlState.kt   // StateFlow joystick + flag armed/stop
- └─ ui/
-     ├─ FlyScreen.kt          // 2 joystick + STOP + status bar
-     └─ Joystick.kt           // komponen joystick (pointerInput + drag)
+```bash
+./gradlew test assembleDebug
+# APK: app/build/outputs/apk/debug/app-debug.apk
+adb install -r app/build/outputs/apk/debug/app-debug.apk
 ```
 
-Alur data:
-```
-Joystick (UI) ─► ControlState (StateFlow) ─► ControlLoop 50 Hz ─► Crtp.encode ─► DroneLink.send ─► UDP
-                                                                             DroneLink.receive ─► status "connected"
-```
+### Rilis
 
-## 6. Ikat socket ke WiFi drone (bagian paling penting)
+Push tag versi, lalu GitHub Actions akan membuat Release beserta APK yang sudah ditandatangani:
 
-Inilah yang membuat app lama gagal. Dua opsi:
-
-**Opsi A — user sudah connect manual ke WiFi drone (paling simpel, untuk MVP):**
-```kotlin
-val cm = getSystemService(ConnectivityManager::class.java)
-val request = NetworkRequest.Builder()
-    .addTransportType(NetworkCapabilities.TRANSPORT_WIFI)
-    .removeCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) // AP drone tidak punya internet
-    .build()
-cm.requestNetwork(request, object : ConnectivityManager.NetworkCallback() {
-    override fun onAvailable(network: Network) {
-        cm.bindProcessToNetwork(network)   // semua socket proses ini lewat WiFi drone
-        // atau: network.bindSocket(datagramSocket)
-    }
-})
+```bash
+git tag v0.2
+git push origin v0.2
 ```
 
-**Opsi B — app yang menyambungkan ke AP (Android 10+, `WifiNetworkSpecifier`):**
-`setSsidPattern(PatternMatcher("ESP-DRONE_", PATTERN_PREFIX))` + `setWpa2Passphrase("12345678")`, lalu `requestNetwork` dan `bindProcessToNetwork` di `onAvailable`. Android akan menampilkan dialog pilih jaringan. UX lebih enak, tapi lebih banyak kasus tepi. Kerjakan setelah MVP.
+Key rilis disimpan sebagai secret repo `KEYSTORE_BASE64` dan `KEYSTORE_PASSWORD`.
 
-**Permission (AndroidManifest):**
-`INTERNET`, `ACCESS_NETWORK_STATE`, `CHANGE_NETWORK_STATE`, `ACCESS_WIFI_STATE`.
-Opsi B di Android 13+ juga butuh `NEARBY_WIFI_DEVICES` (runtime permission).
+## Teknologi
 
-**Cek cepat bahwa binding berhasil:** LED biru drone berubah dari kedip lambat menjadi **nyala terus** dalam 1 detik setelah app mulai mengirim.
+Kotlin, Jetpack Compose (Material 3), Kotlin Coroutines. Tanpa library pihak ketiga.
+Minimal Android 10 (API 29).
 
-## 7. Keselamatan (wajib di MVP)
+Komunikasi: UDP ke `192.168.43.42:2390`, paket CRTP commander (roll, pitch, yaw, thrust) + 1 byte checksum.
 
-- Paket pertama dan saat "disarm": **thrust 0**.
-- **Tombol STOP** besar dan selalu terlihat: set thrust 0, kunci thrust sampai joystick kiri diturunkan ke bawah lagi.
-- `onPause` / `onStop` / layar mati / kehilangan jaringan: kirim thrust 0 lima kali, lalu stop loop.
-- **Arm switch:** thrust tidak dikirim (> 0) sebelum user menggeser toggle "ARM". Mencegah motor nyala karena jari menyenggol layar.
-- `FLAG_KEEP_SCREEN_ON` saat di layar terbang.
-- Batas thrust app (`MAX_THRUST_APP`) bisa diatur, default 60000 (sama dengan firmware).
-- **Semua tes awal tanpa propeller.**
+```
+app/src/main/java/com/zora/drone/
+├─ MainActivity.kt          host Compose, layar selalu nyala, matikan motor saat app ditutup
+├─ proto/Crtp.kt            encode paket setpoint dan echo
+├─ control/ControlState.kt  state joystick, ARM/STOP, mapping stik ke setpoint
+├─ net/DroneLink.kt         ikat socket ke WiFi drone, kirim 50 Hz, hitung ping dan range
+└─ ui/
+   ├─ FlyScreen.kt          layar utama
+   └─ Joystick.kt           komponen joystick
+```
 
-## 8. Milestone & cara uji
+Detail protokol, aturan firmware, dan rencana pengembangan ada di [blueprint.md](blueprint.md).
 
-| # | Target | Selesai kalau |
-|---|---|---|
-| M0 | Project Kotlin + Compose kosong jalan di tablet | app terbuka |
-| M1 | `DroneNetwork` + `DroneLink` + kirim paket thrust 0 tiap 20 ms | **LED drone nyala terus** |
-| M2 | Slider thrust sederhana (tanpa joystick) | motor berputar, naik-turun mengikuti slider (tanpa prop) |
-| M3 | 2 joystick + mapping + deadzone | dari log `ATT ... pwm=` (debug ON): pwm berubah sesuai arah stik |
-| M4 | Keselamatan: ARM, STOP, lifecycle → thrust 0 | lepas app/kunci layar, motor berhenti < 0,5 s |
-| M5 | Tes terbang pendek dengan prop, area lapang | hover terkendali |
-| F2 | Telemetri baterai, trim, expo, simpan setting | angka baterai tampil di app |
+## Belum ada
 
-**Unit test kecil (wajib, tanpa framework tambahan selain JUnit bawaan):**
-`Crtp.encodeSetpoint(0f, 0f, 0f, 0)` harus menghasilkan 16 byte, byte[0] = `0x30`, byte[15] = jumlah byte 0..14 & 0xFF.
-Bandingkan dengan satu paket yang dihitung manual.
-
-## 9. Referensi
-
-- Firmware commander: `components/core/crazyflie/modules/src/crtp_commander_rpyt.c`
-- UDP server & checksum: `components/drivers/general/wifi/wifi_esp32.c`
-- Link timeout: `components/core/crazyflie/hal/src/wifilink.c`
-- Protokol CRTP & log/param: `../esp-drone/docs/en/rst/communication.rst`
-- App iOS resmi (pembanding perilaku): `https://github.com/EspressifApps/ESP-Drone-iOS`
-- Source app Android lama (referensi parsing CRTP log untuk fase 2): `https://github.com/EspressifApps/ESP-Drone-Android`
-
-## 10. Prasyarat drone sebelum M5 (terbang dengan prop)
-
-- [ ] SS14 + elco di jalur VBUS (cegah brownout, lihat `../esp-drone/docs/WIRING.md`)
-- [ ] Kalibrasi level `ROLL_CALIB` / `PITCH_CALIB`
-- [ ] Baterai 1S dengan rating C memadai (≥ 20C)
-- [ ] Arah putar & propeller sesuai `../esp-drone/docs/WIRING.md` §7
+- Telemetri baterai.
+- Layar setting (trim, sensitivitas, expo).
+- Altitude hold (butuh sensor ketinggian).
+- Sambung otomatis ke WiFi drone dari dalam app.
