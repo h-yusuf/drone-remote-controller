@@ -7,6 +7,7 @@ import android.net.NetworkCapabilities
 import android.net.NetworkRequest
 import android.os.SystemClock
 import com.zora.drone.control.ControlState
+import com.zora.drone.control.MotorTest
 import com.zora.drone.proto.Crtp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -38,7 +39,11 @@ const val PATH_LOSS_N = 2.5f
 
 fun distanceM(rssi: Int): Float = 10f.pow((RSSI_AT_1M - rssi) / (10 * PATH_LOSS_N))
 
-class DroneLink(private val cm: ConnectivityManager, private val state: ControlState) {
+class DroneLink(
+    private val cm: ConnectivityManager,
+    private val state: ControlState,
+    private val motorTest: MotorTest,
+) {
     /** IPv4 of the bound WiFi, null while searching. SSID needs location permission; the drone subnet is enough. */
     val wifiIp = MutableStateFlow<String?>(null)
     val connected = MutableStateFlow(false)
@@ -46,6 +51,8 @@ class DroneLink(private val cm: ConnectivityManager, private val state: ControlS
     val rssi = MutableStateFlow<Int?>(null)
     /** Echo round-trip time, smoothed. */
     val rttMs = MutableStateFlow<Float?>(null)
+    /** Last motor-test param reply: 0 = accepted, else firmware errno. Null until one arrives. */
+    val paramError = MutableStateFlow<Int?>(null)
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val drone = InetSocketAddress(DRONE_IP, 2390)
@@ -85,9 +92,20 @@ class DroneLink(private val cm: ConnectivityManager, private val state: ControlS
         cm.requestNetwork(request, callback)
         sendJob = scope.launch {
             var tick = 0
+            var testOn = false
             while (isActive) {
                 send(state.packet())
-                if (tick++ % 10 == 0) send(Crtp.echo(System.nanoTime())) // 5 Hz
+                if (tick % 10 == 0) send(Crtp.echo(System.nanoTime())) // 5 Hz
+                if (motorTest.active) {
+                    if (!testOn) paramError.value = null
+                    testOn = true
+                    // Resend every 100 ms: UDP may drop, and the firmware drops out of test mode after 1 s of silence.
+                    if (tick % 5 == 0) sendMotors(enable = true, motorTest::pwm)
+                } else if (testOn) {
+                    testOn = false
+                    repeat(3) { sendMotors(enable = false) }
+                }
+                tick++
                 connected.value = SystemClock.elapsedRealtime() - lastRx < 1000
                 delay(20)
             }
@@ -101,6 +119,7 @@ class DroneLink(private val cm: ConnectivityManager, private val state: ControlS
                     pkt.length = pkt.data.size
                     s.receive(pkt)
                     lastRx = SystemClock.elapsedRealtime()
+                    Crtp.paramReplyError(pkt.data, pkt.length)?.let { paramError.value = it }
                     Crtp.echoTime(pkt.data, pkt.length)?.let {
                         val ms = (System.nanoTime() - it) / 1e6f
                         rttMs.value = rttMs.value?.let { old -> old * 0.8f + ms * 0.2f } ?: ms
@@ -123,6 +142,7 @@ class DroneLink(private val cm: ConnectivityManager, private val state: ControlS
             loop.join()
             val zero = Crtp.encodeSetpoint(0f, 0f, 0f, 0)
             repeat(5) { send(zero, s); delay(20) }
+            repeat(3) { sendMotors(enable = false, s = s) } // harmless if test mode was never on
             rx?.cancel()
             s?.close()
             if (socket === s) socket = null
@@ -131,6 +151,12 @@ class DroneLink(private val cm: ConnectivityManager, private val state: ControlS
             rssi.value = null
             rttMs.value = null
         }
+    }
+
+    /** m1..m4 first, then enable, so entering/leaving test mode never spins a motor at a stale value. */
+    private fun sendMotors(enable: Boolean, pwm: (Int) -> Int = { 0 }, s: DatagramSocket? = socket) {
+        for (i in 0..3) send(Crtp.setParam("motorPowerSet", "m${i + 1}", pwm(i), uint16 = true), s)
+        send(Crtp.setParam("motorPowerSet", "enable", if (enable) 1 else 0, uint16 = false), s)
     }
 
     private fun send(b: ByteArray, s: DatagramSocket? = socket) {

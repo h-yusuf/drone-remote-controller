@@ -26,6 +26,7 @@ Dibuat karena app resmi ESP-Drone tidak bisa mengirim perintah di Android 10 ke 
   - Tombol **STOP** besar di tengah: langsung matikan motor.
   - Saat app ditutup, pindah ke app lain, atau layar dikunci: motor dimatikan otomatis.
   - Layar tidak mati sendiri selama app terbuka.
+- **Mode Test Motor** untuk bench test tanpa propeller (lihat [Test motor](#test-motor)).
 
 ## Instalasi
 
@@ -52,6 +53,22 @@ Kalau sebelumnya sudah memasang versi yang ditandatangani dengan key lain (misal
 > **Selalu tes pertama kali tanpa propeller.** Pastikan motor berputar sesuai stik dan berhenti saat STOP ditekan atau layar dikunci.
 
 Kalau drone terbalik, firmware mematikan motor sampai drone di-restart (LED kedip sangat cepat).
+
+### Test motor
+
+Untuk mengecek kabel tiap motor dan kekuatan baterai, tanpa flash firmware tes. **Lepas semua propeller dulu.**
+
+1. Pastikan ARM mati, lalu tekan **TEST MOTOR** di bagian atas layar.
+2. Cek status **Firmware** jadi `OK`. Kalau muncul `param tidak ada`, firmware drone belum mendukung fitur ini.
+3. Atur kekuatan dengan slider (0–100%, default 20%).
+4. Tahan tombol **M1–M4** untuk memutar satu motor. Motor berhenti saat jari dilepas.
+   Tombol disusun sesuai posisi motor dilihat dari atas, depan di atas.
+5. Tahan **SEMUA** untuk memutar keempat motor sekaligus.
+6. **RAMP** menaikkan keempat motor dari 10% sampai 100%, naik 5% tiap 2 detik, lalu berhenti sendiri. Tap lagi untuk berhenti.
+7. **STOP** mematikan semua motor. **KELUAR** (atau tombol back) kembali ke layar terbang.
+
+Motor juga mati saat app ditutup atau layar dikunci. Kalau WiFi putus, firmware mematikan motor sendiri setelah 1 detik.
+Fitur ini butuh firmware dengan pengaman "link lost" di `power_distribution_stock.c`.
 
 ### Kalau tidak tersambung
 
@@ -107,11 +124,13 @@ Komunikasi: UDP ke `192.168.43.42:2390`, paket CRTP commander (roll, pitch, yaw,
 ```
 app/src/main/java/com/zora/drone/
 ├─ MainActivity.kt          host Compose, layar selalu nyala, matikan motor saat app ditutup
-├─ proto/Crtp.kt            encode paket setpoint dan echo
+├─ proto/Crtp.kt            encode paket setpoint, echo, dan set param by name
 ├─ control/ControlState.kt  state joystick, ARM/STOP, mapping stik ke setpoint
+├─ control/MotorTest.kt     state mode test motor (tombol, slider, ramp)
 ├─ net/DroneLink.kt         ikat socket ke WiFi drone, kirim 50 Hz, hitung ping dan range
 └─ ui/
    ├─ FlyScreen.kt          layar utama
+   ├─ MotorTestScreen.kt    layar test motor
    └─ Joystick.kt           komponen joystick
 ```
 

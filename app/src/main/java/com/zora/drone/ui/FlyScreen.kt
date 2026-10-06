@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -28,7 +29,7 @@ import com.zora.drone.net.DroneLink
 import com.zora.drone.net.distanceM
 
 @Composable
-fun FlyScreen(state: ControlState, link: DroneLink) {
+fun FlyScreen(state: ControlState, link: DroneLink, onMotorTest: () -> Unit) {
     val ip by link.wifiIp.collectAsState()
     val onDrone = ip?.startsWith(DRONE_SUBNET) == true
     val connected by link.connected.collectAsState()
@@ -51,6 +52,8 @@ fun FlyScreen(state: ControlState, link: DroneLink) {
                 color = Color.White, fontSize = 16.sp)
             Text("ARM", color = Color.White, fontWeight = FontWeight.Bold)
             Switch(checked = state.armed, onCheckedChange = state::arm)
+            // Only while disarmed, so test mode never overlaps with flying.
+            OutlinedButton(onClick = onMotorTest, enabled = !state.armed) { Text("TEST MOTOR", color = Color.White) }
         }
         Joystick(state.left, { state.left = it }, centerY = false,
             Modifier.align(Alignment.BottomStart).fillMaxHeight(0.75f))
@@ -65,7 +68,7 @@ fun FlyScreen(state: ControlState, link: DroneLink) {
 }
 
 @Composable
-private fun Status(label: String, value: String, ok: Boolean) {
+internal fun Status(label: String, value: String, ok: Boolean) {
     Column {
         Text(label, color = Color.Gray, fontSize = 12.sp)
         Text(value, color = if (ok) Color(0xFF66BB6A) else Color(0xFFFFA726), fontSize = 16.sp)

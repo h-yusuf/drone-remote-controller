@@ -44,4 +44,36 @@ class CrtpTest {
         assertEquals(1f, distanceM(RSSI_AT_1M), 1e-4f)
         assertEquals(10f, distanceM(RSSI_AT_1M - 25), 1e-3f) // n=2.5: -25 dB = 10x
     }
+
+    @Test fun setParamByName() {
+        // Blueprint §11 example: m1 = 20000 -> 23 00 "motorPowerSet" 00 "m1" 00 09 20 4E + checksum
+        val body = byteArrayOf(0x23, 0) + "motorPowerSet".toByteArray() + 0 + "m1".toByteArray() + 0 +
+            byteArrayOf(0x09, 0x20, 0x4E)
+        val expected = body + body.sumOf { it.toInt() and 0xFF }.toByte()
+        assertArrayEquals(expected, Crtp.setParam("motorPowerSet", "m1", 20000, uint16 = true))
+        assertEquals(0x08.toByte(), Crtp.setParam("motorPowerSet", "enable", 1, uint16 = false).let { it[it.size - 3] })
+    }
+
+    @Test fun paramReply() {
+        // Reply = request with the type byte replaced by the error code and the value dropped.
+        fun reply(err: Int): ByteArray {
+            val body = byteArrayOf(0x23, 0) + "motorPowerSet".toByteArray() + 0 + "m1".toByteArray() + 0 + err.toByte()
+            return body + body.sumOf { it.toInt() and 0xFF }.toByte()
+        }
+        assertEquals(0, reply(0).let { Crtp.paramReplyError(it, it.size) })
+        assertEquals(2, reply(2).let { Crtp.paramReplyError(it, it.size) })
+        assertEquals(null, Crtp.echo(1).let { Crtp.paramReplyError(it, it.size) })
+    }
+
+    @Test fun motorTestPwm() {
+        val t = com.zora.drone.control.MotorTest()
+        assertEquals(0, t.pwm(0)) // inactive -> always 0
+        t.enter(); t.held = setOf(0)
+        assertEquals(20 * 65535 / 100, t.pwm(0))
+        assertEquals(0, t.pwm(1))
+        t.ramp = 100
+        assertEquals(65535, t.pwm(3))
+        t.exit()
+        assertEquals(0, t.pwm(0))
+    }
 }

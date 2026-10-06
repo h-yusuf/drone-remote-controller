@@ -24,6 +24,7 @@ Path file firmware merujuk ke repo firmware `esp-drone` (folder sebelah: `../esp
 - Telemetri baterai (`pm.vbat`) lewat CRTP log.
 - Trim roll/pitch, sensitivitas, expo.
 - Simpan setting.
+- **Mode Test Motor** (bagian 11): putar M1–M4 satu per satu, atau keempatnya bersama dengan slider/ramp thrust. Untuk bench test tanpa propeller.
 
 **Di luar scope sekarang:** altitude/position hold (butuh sensor tambahan), FPV, integrasi Zora.
 
@@ -187,3 +188,68 @@ Bandingkan dengan satu paket yang dihitung manual.
 - [ ] Kalibrasi level `ROLL_CALIB` / `PITCH_CALIB`
 - [ ] Baterai 1S dengan rating C memadai (≥ 20C)
 - [ ] Arah putar & propeller sesuai `../esp-drone/docs/WIRING.md` §7
+
+## 11. Mode Test Motor (bench test)
+
+**Tujuan:** cek wiring tiap kanal motor dan batas baterai dari app, tanpa flash firmware tes (`tools/motortest`, `tools/thrusttest`).
+**Bisa dilakukan tanpa ubah protokol:** firmware sudah punya parameter `motorPowerSet` yang langsung menulis PWM motor dan **melewati stabilizer**.
+
+### Parameter firmware (dicek di source)
+
+| Param | Tipe | Arti | Sumber |
+|---|---|---|---|
+| `motorPowerSet.enable` | uint8 | `1` = motor ikut nilai m1..m4 di bawah, stabilizer diabaikan. `0` = normal | `power_distribution_stock.c:135-141` |
+| `motorPowerSet.m1` .. `m4` | uint16 | PWM tiap motor, 0..65535 | idem |
+
+`powerDistribution()` memakai nilai ini selama `enable = 1` (`power_distribution_stock.c:106-112`), asal drone tidak dalam emergency stop.
+
+### Cara set parameter tanpa download TOC: "set by name"
+
+Firmware menerima perintah set-by-name di **CRTP port 2 (param), channel 3 (misc)**, `param.c:181-207`:
+
+```
+byte 0      header CRTP = 0x23            (port 2 << 4 | channel 3)
+byte 1      0x00                          (MISC_SETBYNAME, param.c:75)
+byte 2..    "motorPowerSet\0"             (nama grup, diakhiri 0)
+            "m1\0"                        (nama param, diakhiri 0)
+            tipe: 0x08 = uint8, 0x09 = uint16   (param.h:157-159, harus sama persis)
+            nilai little-endian (1 byte untuk uint8, 2 byte untuk uint16)
+terakhir    checksum UDP (jumlah byte & 0xFF), sama seperti setpoint
+```
+
+Contoh: set `m1 = 20000` → `23 00 "motorPowerSet" 00 "m1" 00 09 20 4E` + checksum.
+Drone membalas paket yang sama dengan byte tipe diganti **kode error** (0 = OK, `ENOENT` = nama salah, `EINVAL` = tipe salah).
+Panjang maksimal paket CRTP 30 byte, nama ini muat (±25 byte).
+
+### UI
+
+- Layar terpisah **"Test Motor"**, hanya bisa dibuka saat ARM **mati**. Banner merah: **"LEPAS PROPELLER"**.
+- 4 tombol tahan-untuk-putar: **M1, M2, M3, M4**. Selama ditekan, motor itu jalan di nilai slider. Dilepas → 0.
+- Tombol **SEMUA**: keempat motor bersama di nilai slider.
+- Slider PWM 0–100% (map ke 0–65535), default 20%.
+- Tombol **RAMP**: keempat motor naik 10% → 100%, +5% tiap 2 detik (sama seperti `thrusttest`), berhenti otomatis atau saat STOP.
+- Label posisi motor (M1 depan-kanan, M2 belakang-kanan, M3 belakang-kiri, M4 depan-kiri) dan warna kabel (PH/MB) supaya mudah dicocokkan.
+- Kalau telemetri baterai (fase 2) sudah ada: tampilkan `vbat` saat ramp untuk melihat seberapa dalam baterai anjlok.
+
+### Alur paket
+
+1. Masuk mode: set `m1..m4 = 0` dulu, lalu `enable = 1`.
+2. Selama mode aktif: kirim ulang nilai m1..m4 tiap 100 ms (paket UDP bisa hilang), dan tetap kirim echo untuk status koneksi.
+3. Keluar mode / STOP / app ke background / koneksi putus: set `m1..m4 = 0`, lalu `enable = 0`. Kirim 3 kali.
+
+### Pengaman di firmware (sudah ada, 2026-10-06)
+
+`motorPowerSet` aslinya **tidak punya watchdog**: kalau app tertutup atau WiFi putus saat `enable = 1`, motor terus berputar di nilai terakhir.
+Firmware `esp-drone` (`power_distribution_stock.c`, `powerDistribution()`) sekarang memaksa `enable = 0` dan m1..m4 = 0
+kalau **tidak ada paket dari app > 1 detik** (`crtpIsConnected()`, `WIFI_ACTIVITY_TIMEOUT_MS`). Log: `motorPowerSet disabled: link lost`.
+Konsekuensi untuk app: selama mode test aktif, **terus kirim paket** (echo atau set ulang m1..m4) minimal tiap < 1 detik.
+
+### Uji
+
+| Langkah | Selesai kalau |
+|---|---|
+| Tahan M1 di 30% | hanya motor depan-kanan yang berputar |
+| Ulangi M2, M3, M4 | tiap tombol cocok dengan posisinya |
+| SEMUA di 50% | keempat motor berputar, LED drone tetap nyala terus |
+| Matikan WiFi tablet saat SEMUA aktif | motor berhenti < 1,5 detik (pengaman firmware) |
+| RAMP sampai 100% pakai baterai saja | catat persen saat ESP reboot (kalau ada) |
